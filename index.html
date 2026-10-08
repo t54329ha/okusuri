@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>おくすり</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="おくすり">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f4f7f5">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  :root { --bg:#f4f7f5; --card:#fff; --ink:#1c2b2a; --sub:#6b7b79; --ok:#1f9d6b; --ok-bg:#dff5ea; --miss:#c9d2d0; --line:#e3e9e7; --warn:#b4532a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#121a19; --card:#1c2726; --ink:#eef4f2; --sub:#9db0ad; --ok:#4fd39c; --ok-bg:#1d3b30; --miss:#4a5a58; --line:#2b3837; --warn:#f0a27c; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  body { padding: calc(env(safe-area-inset-top) + 20px) 16px calc(env(safe-area-inset-bottom) + 24px); max-width:480px; margin:0 auto; }
+  .card { background:var(--card); border-radius:20px; padding:20px; margin-bottom:16px; }
+  #status { text-align:center; }
+  #mark { width:104px; height:104px; border-radius:50%; margin:4px auto 12px; display:flex; align-items:center; justify-content:center; font-size:60px; font-weight:700; }
+  #mark.ok { background:var(--ok-bg); color:var(--ok); }
+  #mark.no { background:var(--line); color:var(--sub); }
+  #date { color:var(--sub); font-size:17px; }
+  #msg { font-size:26px; font-weight:700; margin:6px 0 16px; line-height:1.4; }
+  button { font:inherit; color:inherit; border:0; background:none; cursor:pointer; }
+  .btn { border:2px solid var(--line); border-radius:14px; padding:14px 22px; font-size:18px; font-weight:600; min-height:52px; }
+  .btn.main { background:var(--ok); border-color:var(--ok); color:#fff; font-size:22px; padding:18px 40px; }
+  #warn { color:var(--warn); font-size:15px; margin-top:12px; }
+  .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .head h2 { font-size:22px; margin:0; }
+  .nav { width:52px; height:52px; font-size:28px; border-radius:50%; }
+  .grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; text-align:center; }
+  .wd { color:var(--sub); font-size:14px; padding:4px 0; }
+  .day { aspect-ratio:1; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:17px; line-height:1.1; }
+  .day small { font-size:13px; height:14px; }
+  .day.ok { background:var(--ok-bg); color:var(--ok); font-weight:700; }
+  .day.miss { color:var(--sub); }
+  .day.miss small { color:var(--miss); }
+  .day.future { color:var(--miss); }
+  .day.today { outline:3px solid var(--ok); outline-offset:-3px; }
+  #count { color:var(--sub); font-size:16px; margin-top:14px; text-align:center; }
+  .legend { color:var(--sub); font-size:14px; text-align:center; margin-top:6px; }
+  details { color:var(--sub); font-size:15px; }
+  summary { padding:8px 0; }
+  textarea { width:100%; height:90px; font-size:14px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); padding:8px; margin:8px 0; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+
+<div class="card" id="status">
+  <div id="mark" class="ok">✓</div>
+  <div id="date"></div>
+  <div id="msg"></div>
+  <button class="btn" id="act"></button>
+  <div id="warn" hidden>このブラウザでは記録を保存できません。Safari の「プライベートブラウズ」を切ってから開いてください。</div>
+</div>
+
+<div class="card">
+  <div class="head">
+    <button class="nav" id="prev" aria-label="前の月">‹</button>
+    <h2 id="month"></h2>
+    <button class="nav" id="next" aria-label="次の月">›</button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div id="count"></div>
+  <div class="legend">✓ 飲んだ　　－ 記録なし　　日付を押すと直せます</div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>バックアップ（機種変更のとき）</summary>
+    <div>「書き出す」で出た文字を、メモなどに保存します。新しい iPhone では、その文字を貼り付けて「読み込む」を押します。</div>
+    <textarea id="box" placeholder="ここに文字が出ます／貼り付けます"></textarea>
+    <div class="row">
+      <button class="btn" id="exp">書き出す</button>
+      <button class="btn" id="imp">読み込む</button>
+    </div>
+  </details>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var KEY = "kusuri.v1";
+  var $ = function (id) { return document.getElementById(id); };
+  var pad = function (n) { return String(n).padStart(2, "0"); };
+  var keyOf = function (d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+  var WD = ["日", "月", "火", "水", "木", "金", "土"];
+
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY));
+      if (s && Array.isArray(s.days)) return { days: s.days.filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x); }), skip: s.skip || "" };
+    } catch (e) {}
+    return { days: [], skip: "" };
+  }
+  var canSave = true;
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); canSave = true; } catch (e) { canSave = false; }
+    $("warn").hidden = canSave;
+  }
+  var state = load();
+  var view = new Date();
+  var justNow = false;  // 今開いた時に記録したか
+
+  function has(k) { return state.days.indexOf(k) >= 0; }
+  function set(k, on) {
+    var i = state.days.indexOf(k);
+    if (on && i < 0) state.days.push(k);
+    if (!on && i >= 0) state.days.splice(i, 1);
+    state.days.sort();
+  }
+
+  // アイコンを押して開いた時：今日の分がまだなら、記録する。
+  // 今日「取り消す」を押していたら、勝手には記録しない。
+  function autoRecord() {
+    var t = keyOf(new Date());
+    justNow = false;
+    if (!has(t) && state.skip !== t) { set(t, true); justNow = true; }
+    if (state.skip && state.skip !== t) state.skip = "";
+    save();
+  }
+
+  function render() {
+    var now = new Date(), t = keyOf(now), done = has(t);
+    $("date").textContent = (now.getMonth() + 1) + "月" + now.getDate() + "日（" + WD[now.getDay()] + "）";
+    $("mark").className = done ? "ok" : "no";
+    $("mark").textContent = done ? "✓" : "－";
+    $("msg").textContent = done ? (justNow ? "今日の分を記録しました" : "今日は記録済みです") : "今日はまだ記録していません";
+    $("act").textContent = done ? "まちがえた（取り消す）" : "飲んだ";
+    $("act").className = done ? "btn" : "btn main";
+
+    var y = view.getFullYear(), m = view.getMonth();
+    $("month").textContent = y + "年" + (m + 1) + "月";
+    var first = state.days.length ? state.days[0] : t;
+    var html = WD.map(function (w) { return '<div class="wd">' + w + "</div>"; }).join("");
+    for (var i = 0; i < new Date(y, m, 1).getDay(); i++) html += "<div></div>";
+    var days = new Date(y, m + 1, 0).getDate(), n = 0;
+    for (var d = 1; d <= days; d++) {
+      var k = y + "-" + pad(m + 1) + "-" + pad(d), cls = "day", sub = "";
+      if (has(k)) { cls += " ok"; sub = "✓"; n++; }
+      else if (k > t) cls += " future";
+      else if (k >= first) { cls += " miss"; sub = "－"; }
+      if (k === t) cls += " today";
+      html += '<button class="' + cls + '" data-k="' + k + '">' + d + "<small>" + sub + "</small></button>";
+    }
+    $("grid").innerHTML = html;
+    $("count").textContent = "この月に飲んだ日：" + n + "日";
+  }
+
+  function open() {
+    state = load();
+    view = new Date();
+    autoRecord();
+    render();
+  }
+
+  $("act").onclick = function () {
+    var t = keyOf(new Date());
+    if (has(t)) { set(t, false); state.skip = t; } else { set(t, true); state.skip = ""; }
+    justNow = false;
+    save(); render();
+  };
+  $("prev").onclick = function () { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); render(); };
+  $("next").onclick = function () { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); render(); };
+  $("grid").onclick = function (e) {
+    var b = e.target.closest("button[data-k]");
+    if (!b) return;
+    var k = b.dataset.k, t = keyOf(new Date());
+    if (k > t) return;
+    var p = k.split("-"), label = Number(p[1]) + "月" + Number(p[2]) + "日";
+    var on = !has(k);
+    if (!confirm(label + "を「" + (on ? "飲んだ" : "記録なし") + "」にしますか？")) return;
+    set(k, on);
+    if (k === t) state.skip = on ? "" : t;
+    justNow = false;
+    save(); render();
+  };
+  $("exp").onclick = function () { $("box").value = JSON.stringify({ days: state.days }); $("box").select(); };
+  $("imp").onclick = function () {
+    try {
+      var s = JSON.parse($("box").value);
+      if (!s || !Array.isArray(s.days)) throw 0;
+      if (!confirm("今の記録に、貼り付けた記録を足します。よろしいですか？")) return;
+      s.days.forEach(function (k) { if (/^\d{4}-\d{2}-\d{2}$/.test(k)) set(k, true); });
+      save(); render();
+      alert("読み込みました");
+    } catch (e) { alert("読み込めませんでした。書き出した文字を、そのまま貼り付けてください。"); }
+  };
+
+  // ホーム画面のアプリは、閉じても裏に残ることがある。もう一度表に出た時にも記録する。
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) open(); });
+  window.addEventListener("pageshow", function (e) { if (e.persisted) open(); });
+  open();
+
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  }
+})();
+</script>
+</body>
+</html>
