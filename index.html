@@ -13,9 +13,9 @@
 <link rel="icon" href="icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>
-  :root { --bg:#f4f7f5; --card:#fff; --ink:#1c2b2a; --sub:#6b7b79; --ok:#1f9d6b; --ok-bg:#dff5ea; --miss:#c9d2d0; --line:#e3e9e7; --warn:#b4532a; }
+  :root { --bg:#f4f7f5; --card:#fff; --ink:#1c2b2a; --sub:#6b7b79; --ok:#1f9d6b; --ok-bg:#dff5ea; --miss:#c9d2d0; --line:#e3e9e7; --warn:#b4532a; --dup:#d62828; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#121a19; --card:#1c2726; --ink:#eef4f2; --sub:#9db0ad; --ok:#4fd39c; --ok-bg:#1d3b30; --miss:#4a5a58; --line:#2b3837; --warn:#f0a27c; }
+    :root { --bg:#121a19; --card:#1c2726; --ink:#eef4f2; --sub:#9db0ad; --ok:#4fd39c; --ok-bg:#1d3b30; --miss:#4a5a58; --line:#2b3837; --warn:#f0a27c; --dup:#e5484d; }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
@@ -25,6 +25,14 @@
   #mark { width:104px; height:104px; border-radius:50%; margin:4px auto 12px; display:flex; align-items:center; justify-content:center; font-size:60px; font-weight:700; }
   #mark.ok { background:var(--ok-bg); color:var(--ok); }
   #mark.no { background:var(--line); color:var(--sub); }
+  /* いま記録した時：緑の ✓ が弾む。すでに記録済みの時：赤いドクロ（もう飲まない、の合図） */
+  #mark.now { background:var(--ok-bg); color:var(--ok); animation:pop .6s cubic-bezier(.2,1.6,.4,1); }
+  #mark.dup { background:var(--dup); color:#fff; font-size:64px; }
+  @keyframes pop { 0% { transform:scale(.3); opacity:0; } 60% { transform:scale(1.15); opacity:1; } 100% { transform:scale(1); } }
+  #flash { display:inline-block; background:var(--ok); color:#fff; font-size:20px; font-weight:700; border-radius:999px; padding:8px 22px; margin-bottom:12px; animation:pop .5s ease-out; }
+  #flash[hidden] { display:none; }
+  #status.dup #msg { color:var(--dup); }
+  #ago { color:var(--sub); font-size:17px; margin:-8px 0 16px; }
   #date { color:var(--sub); font-size:17px; }
   #msg { font-size:26px; font-weight:700; margin:6px 0 16px; line-height:1.4; }
   button { font:inherit; color:inherit; border:0; background:none; cursor:pointer; }
@@ -54,9 +62,11 @@
 <body>
 
 <div class="card" id="status">
+  <div id="flash" hidden>いま記録しました</div>
   <div id="mark" class="ok">✓</div>
   <div id="date"></div>
   <div id="msg"></div>
+  <div id="ago" hidden></div>
   <button class="btn" id="act"></button>
   <div id="warn" hidden>このブラウザでは記録を保存できません。Safari の「プライベートブラウズ」を切ってから開いてください。</div>
 </div>
@@ -96,9 +106,10 @@
   function load() {
     try {
       var s = JSON.parse(localStorage.getItem(KEY));
-      if (s && Array.isArray(s.days)) return { days: s.days.filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x); }), skip: s.skip || "" };
+      if (s && Array.isArray(s.days)) return { days: s.days.filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x); }), skip: s.skip || "",
+                                               times: (s.times && typeof s.times === "object") ? s.times : {} };
     } catch (e) {}
-    return { days: [], skip: "" };
+    return { days: [], skip: "", times: {} };
   }
   var canSave = true;
   function save() {
@@ -110,11 +121,19 @@
   var justNow = false;  // 今開いた時に記録したか
 
   function has(k) { return state.days.indexOf(k) >= 0; }
-  function set(k, on) {
+  // stamp が真なら、記録した時刻も残す（今日の分を、今この瞬間に記録した時だけ）。
+  function set(k, on, stamp) {
     var i = state.days.indexOf(k);
-    if (on && i < 0) state.days.push(k);
-    if (!on && i >= 0) state.days.splice(i, 1);
+    if (on && i < 0) { state.days.push(k); if (stamp) state.times[k] = Date.now(); }
+    if (!on && i >= 0) { state.days.splice(i, 1); delete state.times[k]; }
     state.days.sort();
+  }
+  function clock(ms) { var d = new Date(ms); return d.getHours() + ":" + pad(d.getMinutes()); }
+  function ago(ms) {
+    var m = Math.floor((Date.now() - ms) / 60000);
+    if (m < 1) return "1分以内";
+    if (m < 60) return m + "分前";
+    return Math.floor(m / 60) + "時間" + (m % 60 ? (m % 60) + "分" : "") + "前";
   }
 
   // アイコンを押して開いた時：今日の分がまだなら、記録する。
@@ -122,7 +141,7 @@
   function autoRecord() {
     var t = keyOf(new Date());
     justNow = false;
-    if (!has(t) && state.skip !== t) { set(t, true); justNow = true; }
+    if (!has(t) && state.skip !== t) { set(t, true, true); justNow = true; }
     if (state.skip && state.skip !== t) state.skip = "";
     save();
   }
@@ -130,9 +149,17 @@
   function render() {
     var now = new Date(), t = keyOf(now), done = has(t);
     $("date").textContent = (now.getMonth() + 1) + "月" + now.getDate() + "日（" + WD[now.getDay()] + "）";
-    $("mark").className = done ? "ok" : "no";
-    $("mark").textContent = done ? "✓" : "－";
-    $("msg").textContent = done ? (justNow ? "今日の分を記録しました" : "今日は記録済みです") : "今日はまだ記録していません";
+    // 3つの状態：まだ（灰色の －）／いま記録した（緑の ✓ が弾む）／すでに記録済み（赤いドクロ）
+    var at = state.times[t], dup = done && !justNow;
+    $("status").className = "card" + (dup ? " dup" : "");
+    $("flash").hidden = !(done && justNow);
+    $("mark").className = !done ? "no" : (justNow ? "now" : "dup");
+    $("mark").textContent = !done ? "－" : (justNow ? "✓" : "\u2620\uFE0E");
+    $("msg").textContent = !done ? "今日はまだ記録していません"
+      : justNow ? "今日の分を記録しました" + (at ? "（" + clock(at) + "）" : "")
+      : (at ? "今日は " + clock(at) + " に飲みました" : "今日はすでに飲みました");
+    $("ago").hidden = !(dup && at);
+    $("ago").textContent = dup && at ? "（" + ago(at) + "）" : "";
     $("act").textContent = done ? "まちがえた（取り消す）" : "飲んだ";
     $("act").className = done ? "btn" : "btn main";
 
@@ -163,8 +190,9 @@
 
   $("act").onclick = function () {
     var t = keyOf(new Date());
-    if (has(t)) { set(t, false); state.skip = t; } else { set(t, true); state.skip = ""; }
-    justNow = false;
+    var on = !has(t);
+    if (on) { set(t, true, true); state.skip = ""; } else { set(t, false); state.skip = t; }
+    justNow = on;      // 「飲んだ」を押した直後は「いま記録しました」
     save(); render();
   };
   $("prev").onclick = function () { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); render(); };
@@ -177,18 +205,22 @@
     var p = k.split("-"), label = Number(p[1]) + "月" + Number(p[2]) + "日";
     var on = !has(k);
     if (!confirm(label + "を「" + (on ? "飲んだ" : "記録なし") + "」にしますか？")) return;
-    set(k, on);
+    set(k, on, k === t);
     if (k === t) state.skip = on ? "" : t;
     justNow = false;
     save(); render();
   };
-  $("exp").onclick = function () { $("box").value = JSON.stringify({ days: state.days }); $("box").select(); };
+  $("exp").onclick = function () { $("box").value = JSON.stringify({ days: state.days, times: state.times }); $("box").select(); };
   $("imp").onclick = function () {
     try {
       var s = JSON.parse($("box").value);
       if (!s || !Array.isArray(s.days)) throw 0;
       if (!confirm("今の記録に、貼り付けた記録を足します。よろしいですか？")) return;
-      s.days.forEach(function (k) { if (/^\d{4}-\d{2}-\d{2}$/.test(k)) set(k, true); });
+      s.days.forEach(function (k) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return;
+        set(k, true);
+        if (s.times && typeof s.times[k] === "number" && !state.times[k]) state.times[k] = s.times[k];
+      });
       save(); render();
       alert("読み込みました");
     } catch (e) { alert("読み込めませんでした。書き出した文字を、そのまま貼り付けてください。"); }
